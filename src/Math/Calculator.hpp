@@ -6,18 +6,22 @@
 #include <cmath>
 #include <atomic>
 #include <mutex>
+#include "../Data/Types.hpp"
 
 namespace nandl {
 
-// ... (Giữ nguyên các enum MetricType, InputData, ModSettings, CalculationResult, Calculator) ...
-
-// Các hàm điều khiển luồng tính toán toàn cục
+// Global calculation control flags
 void stopGlobalRecalc();
-void startGlobalRecalc(); // <--- THÊM DÒNG NÀY
+void startGlobalRecalc();
 bool isCalculating();
+
+class Calculator {
+public:
+    static CalculationResult solve(const std::vector<InputData>& inputs, double targetProb = 0.5);
+};
 
 } // namespace nandl
 
-// Khai báo ngoài namespace toàn cục cho các file UI gọi trực tiếp
+// Global C-style declarations for UI callers
 void stopGlobalRecalc();
-void startGlobalRecalc(); // <--- THÊM DÒNG NÀY
+void startGlobalRecalc();
