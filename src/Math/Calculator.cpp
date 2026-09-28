@@ -1,113 +1,226 @@
 #include "Calculator.hpp"
+#include <algorithm>
+#include <limits>
+#include <numeric>
 
 namespace nandl {
 
-double Calculator::calculateLambda(const InputData& input, const ModSettings& settings) {
-    double lambda = 1.0;
+// Cờ kiểm soát luồng ngầm toàn cục
+static std::atomic<bool> g_isCalculating{false};
+static std::atomic<bool> g_cancelRequested{false};
 
-    // 1. Nerve Multiplier: lambda_{t,i} = e^(-k_t * t_i)
-    if (settings.enableNerve && settings.kt > 0.0) {
-        lambda *= std::exp(-settings.kt * input.timePos);
-    }
-
-    // 2. Fatigue Multiplier: lambda_{u,i} = e^(-k_u * i)
-    if (settings.enableFatigue && settings.ku > 0.0) {
-        lambda *= std::exp(-settings.ku * static_cast<double>(input.index));
-    }
-
-    // 3. CPS Multiplier: c_i = (i - i') / (t_i - t_i'), lambda_{c,i} = (4 / max(1, 2 * c_i))^k_c
-    // Only apply if there is a valid previous input (prevIndex > 0)
-    if (settings.enableCPS && settings.kc > 0.0 && input.prevIndex > 0) {
-        double deltaTime = input.timePos - input.prevTimePos;
-        if (deltaTime > 1e-5) {
-            double deltaInputs = static_cast<double>(input.index - input.prevIndex);
-            double localCPS = deltaInputs / deltaTime;
-            double cpsDenominator = std::max(1.0, 2.0 * localCPS);
-            lambda *= std::pow(4.0 / cpsDenominator, settings.kc);
-        }
-    }
-
-    return lambda;
+void stopGlobalRecalc() {
+    g_cancelRequested.store(true);
+    g_isCalculating.store(false);
 }
 
-double Calculator::calculatePassProbability(const InputData& input, double L, const ModSettings& settings) {
-    double w_i = input.frameWindow * (1.0 / settings.frameRate);
-    double s_i = 0.5 * w_i * L;
+bool isCalculating() {
+    return g_isCalculating.load();
+}
 
-    double lambda = calculateLambda(input, settings);
-    double moddedSigma = s_i * lambda;
-
-    // erf input bounded to avoid numerical instability
-    double arg = moddedSigma / std::sqrt(2.0);
-    double prob = std::erf(std::min(arg, 5.0));
+// Công thức tính hệ số điều chỉnh Modifier Lambda (Nerve, Fatigue, CPS)
+static double calculateLambda(
+    double timeI,
+    double cumInputs,
+    double localCPS,
+    const ModSettings& settings,
+    MetricType metric
+) {
+    double lambdaT = std::exp(-settings.kt * timeI);                    // Nerve
+    double lambdaU = std::exp(-settings.ku * cumInputs);                // Fatigue
     
-    // Clamp probability slightly below 1.0 and above 0 to prevent exact 0 or 1 edge cases
-    return std::clamp(prob, 1e-12, 1.0 - 1e-15);
+    // CPS Modifier: lambda_c = (4 / max(1, 2 * cps))^kc
+    double lambdaC = 1.0;
+    if (localCPS > 0.0) {
+        double denom = std::max(1.0, 2.0 * localCPS);
+        lambdaC = std::pow(4.0 / denom, settings.kc);
+    }
+
+    switch (metric) {
+        case MetricType::Nerve:        return lambdaT;
+        case MetricType::Fatigue:      return lambdaU;
+        case MetricType::CPS:          return lambdaC;
+        case MetricType::NerveFatigue: return lambdaT * lambdaU;
+        case MetricType::NerveCPS:     return lambdaT * lambdaC;
+        case MetricType::FatigueCPS:   return lambdaU * lambdaC;
+        case MetricType::All:          return lambdaT * lambdaU * lambdaC;
+        case MetricType::Base:
+        default:                       return 1.0;
+    }
 }
 
-double Calculator::calculateExpectedCompletionTime(const std::vector<InputData>& inputs, double L, const ModSettings& settings) {
-    if (inputs.empty()) return 0.0;
-
-    size_t n = inputs.size();
-    std::vector<double> p(n);
-    std::vector<double> q(n);
-    std::vector<double> r(n);
-
-    // Step 1: Compute p_i and q_i
-    for (size_t i = 0; i < n; ++i) {
-        p[i] = calculatePassProbability(inputs[i], L, settings);
-        q[i] = 1.0 - p[i];
+double Calculator::computeExpectedTime(
+    const std::vector<InputData>& inputs,
+    const ModSettings& settings,
+    MetricType metric,
+    double L,
+    double* outPassProb,
+    double* outAttempts
+) {
+    if (inputs.empty() || settings.tps <= 0.0 || L <= 0.0) {
+        if (outPassProb) *outPassProb = 0.0;
+        if (outAttempts) *outAttempts = 0.0;
+        return std::numeric_limits<double>::infinity();
     }
 
-    // Step 2: Compute reaching probabilities r_i
-    r[0] = 1.0;
-    for (size_t i = 1; i < n; ++i) {
-        r[i] = r[i - 1] * p[i - 1];
-        if (r[i] < 1e-300) r[i] = 1e-300; // Underflow protection
-    }
-
-    // Step 3: Compute total completion probability P(C)
-    double PC = r[n - 1] * p[n - 1];
-    if (PC <= 1e-300) {
-        return 1e18; // Return an arbitrarily large duration if completion probability is 0
-    }
-
-    // Step 4: Compute E[T_A] including respawn time penalty on failure
-    double t_n = inputs.back().timePos;
-    double failureTimeSum = 0.0;
-
-    for (size_t i = 0; i < n; ++i) {
-        failureTimeSum += (inputs[i].timePos + settings.respawnTime) * r[i] * q[i];
-    }
-
-    double ETA = (t_n * PC) + failureTimeSum;
-
-    // Step 5: E[T_C] = E[T_A] / P(C)
-    return ETA / PC;
-}
-
-double Calculator::solveLStar(const std::vector<InputData>& inputs, const ModSettings& settings) {
-    if (inputs.empty()) return 0.0;
-
-    double targetSeconds = settings.targetHours * 3600.0;
-
-    // Binary search bounds (expanded high bound for extreme levels)
-    double low = 0.0001;
-    double high = 10000.0;
-    double mid = 0.0;
-
-    for (int iter = 0; iter < 70; ++iter) {
-        mid = low + (high - low) / 2.0;
-        double ETC = calculateExpectedCompletionTime(inputs, mid, settings);
-
-        if (ETC > targetSeconds) {
-            low = mid;
-        } else {
-            high = mid;
+    // Lọc danh sách các input đang active
+    std::vector<InputData> activeInputs;
+    activeInputs.reserve(inputs.size());
+    for (const auto& in : inputs) {
+        if (in.active && in.window > 0.0) {
+            activeInputs.push_back(in);
         }
     }
 
-    return mid;
+    if (activeInputs.empty()) {
+        if (outPassProb) *outPassProb = 1.0;
+        if (outAttempts) *outAttempts = 1.0;
+        return 0.0;
+    }
+
+    const size_t N = activeInputs.size();
+    std::vector<double> p(N, 1.0);
+
+    double cumulativeInputs = 0.0;
+    const double sqrt2 = 1.41421356237309504880;
+
+    for (size_t i = 0; i < N; ++i) {
+        cumulativeInputs += activeInputs[i].count;
+
+        // Tính Local CPS
+        double localCPS = 0.0;
+        if (i > 0) {
+            double dt = activeInputs[i].time - activeInputs[i - 1].time;
+            if (dt > 1e-6) {
+                localCPS = static_cast<double>(activeInputs[i].count) / dt;
+            }
+        }
+
+        // Tính hệ số Lambda
+        double lambda = calculateLambda(
+            activeInputs[i].time,
+            cumulativeInputs,
+            localCPS,
+            settings,
+            metric
+        );
+
+        // Công thức NaNDL:
+        // Window time: w_i = N_i / TPS
+        // Base Sigma: s_i = 0.5 * w_i * L
+        // Modded Sigma: s_i_mod = s_i * lambda
+        double w_i = activeInputs[i].window / settings.tps;
+        double sigma = 0.5 * w_i * L * lambda;
+
+        // Pass prob p_i = erf(sigma / sqrt(2))
+        double prob = std::erf(sigma / sqrt2);
+        
+        // Khống chế biên để tránh tràn số học
+        p[i] = std::clamp(prob, 1e-15, 1.0 - 1e-15);
+    }
+
+    // Tính Xác suất hoàn thành toàn bộ level P(C) bằng Log-space
+    double logPassProb = 0.0;
+    for (double pi : p) {
+        logPassProb += std::log(pi);
+    }
+    double passProb = std::exp(logPassProb);
+
+    // Tính Thời gian thử kỳ vọng E[T_A]
+    double expectedAttemptDuration = 0.0;
+    double currentReachProb = 1.0;
+
+    for (size_t i = 0; i < N; ++i) {
+        double failProb = 1.0 - p[i];
+        // Thời gian nếu chết ở input i: t_i + respawnTime
+        double deathTime = activeInputs[i].time + settings.respawnTime;
+        
+        expectedAttemptDuration += deathTime * currentReachProb * failProb;
+        currentReachProb *= p[i];
+    }
+
+    // Thời gian nếu hoàn thành level
+    double totalLevelTime = activeInputs.back().time;
+    expectedAttemptDuration += totalLevelTime * passProb;
+
+    // Thời gian hoàn thành kỳ vọng E[T_C] = E[T_A] / P(C)
+    double expectedCompletionTime = (passProb > 1e-300) 
+        ? (expectedAttemptDuration / passProb) 
+        : std::numeric_limits<double>::infinity();
+
+    if (outPassProb) *outPassProb = passProb;
+    if (outAttempts) *outAttempts = (passProb > 1e-300) ? (1.0 / passProb) : std::numeric_limits<double>::infinity();
+
+    return expectedCompletionTime;
+}
+
+CalculationResult Calculator::solve(
+    const std::vector<InputData>& inputs,
+    const ModSettings& settings,
+    MetricType metric
+) {
+    CalculationResult res;
+    g_isCalculating.store(true);
+
+    double targetTime = settings.targetSolveTime;
+    
+    // Thuật toán Binary Search tìm L* sao cho E[T_C](L*) = targetSolveTime (24h)
+    double low = 1e-7;
+    double high = 100000.0; // Giới hạn trên cao đủ đáp ứng cả các level cực khó (Silent Circles, Carmine Bullet)
+
+    // Mở rộng ranh giới upper bound nếu level quá khó
+    if (computeExpectedTime(inputs, settings, metric, high) > targetTime) {
+        high = 1e8;
+    }
+
+    for (int iter = 0; iter < 60; ++iter) {
+        if (g_cancelRequested.load()) {
+            res.valid = false;
+            g_isCalculating.store(false);
+            return res;
+        }
+
+        double mid = low + (high - low) / 2.0;
+        double currentTC = computeExpectedTime(inputs, settings, metric, mid);
+
+        if (currentTC > targetTime) {
+            low = mid;  // E[T_C] còn quá lớn -> L* quá nhỏ -> Tăng L*
+        } else {
+            high = mid; // E[T_C] đã nhỏ hơn target -> Giảm L*
+        }
+
+        if ((high - low) < 1e-8) break;
+    }
+
+    res.lStar = (low + high) / 2.0;
+    res.expectedTime = computeExpectedTime(
+        inputs, settings, metric, res.lStar, 
+        &res.passProbability, &res.expectedAttempts
+    );
+    res.valid = true;
+
+    g_isCalculating.store(false);
+    return res;
+}
+
+std::array<CalculationResult, 8> Calculator::solveAll(
+    const std::vector<InputData>& inputs,
+    const ModSettings& settings
+) {
+    std::array<CalculationResult, 8> results;
+    g_cancelRequested.store(false);
+
+    for (int i = 0; i < 8; ++i) {
+        if (g_cancelRequested.load()) break;
+        results[i] = solve(inputs, settings, static_cast<MetricType>(i));
+    }
+
+    return results;
 }
 
 } // namespace nandl
+
+// Định nghĩa hàm toàn cục bên ngoài namespace cho State.cpp
+void stopGlobalRecalc() {
+    nandl::stopGlobalRecalc();
+}
