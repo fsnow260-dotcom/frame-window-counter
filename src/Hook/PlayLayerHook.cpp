@@ -1,5 +1,6 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/PlayerObject.hpp>
 #include "../Data/State.hpp"
 #include "../Common.hpp"
 #include "../Audio/SoundManager.hpp"
@@ -500,124 +501,132 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
     }
 
+    void onPhysicsStep() {
+        if (!g_modEnabled) return;
+        if (!this->m_player1 || this->m_player1->m_isDead) return;
+
+        int currentFrame = static_cast<int>(std::round(this->m_gameState.m_levelTime * g_macroFps)) + 1;
+
+        if (currentFrame < m_fields->m_lastFrame) {
+            m_fields->m_lastFrame = currentFrame - 1;
+            m_fields->m_lastPrecIndex = -1;
+            g_forcePrecRedraw = true;
+            m_fields->m_hudCounts.clear();
+            m_fields->m_lastSpawnFrame1P = -1;
+            m_fields->m_lastSpawnFrame2P = -1;
+            SoundManager::stopAll();
+
+            for (auto& marker : m_fields->m_activeMarkers) {
+                if (marker.node) marker.node->removeFromParent();
+            }
+            m_fields->m_activeMarkers.clear();
+
+            for (const auto& action : g_tickActionsCache) {
+                if (action.shouldDraw && action.frame <= m_fields->m_lastFrame) {
+                    double fw = action.frameWindow;
+                    double ifVal = static_cast<double>(action.ifCount);
+                    for (const auto& [idStr, preset] : g_labelPresets) {
+                        double targetVal = preset.useIF ? ifVal : fw;
+                        if (targetVal >= preset.minVal && targetVal <= preset.maxVal) {
+                            m_fields->m_hudCounts[preset.id]++;
+                        }
+                    }
+                }
+            }
+            this->updateHUDCounts();
+        }
+
+        if (currentFrame > m_fields->m_lastFrame) {
+            bool skipAudio = (currentFrame - m_fields->m_lastFrame > static_cast<int>(g_macroFps));
+            bool needsHudUpdate = false;
+            std::vector<int> updatedPresets;
+
+            auto it = std::upper_bound(g_tickActionsCache.begin(), g_tickActionsCache.end(), m_fields->m_lastFrame,
+                [](int frame, const FrameAction& a) { return frame < a.frame; });
+
+            while (it != g_tickActionsCache.end() && it->frame <= currentFrame) {
+                auto& action = *it;
+                if (action.shouldDraw) {
+                    double fw = action.frameWindow;
+                    int ifVal = action.ifCount;
+                    ccColor4F markerColor = { 1.f, 1.f, 1.f, 1.f };
+
+                    std::string markerText = formatWindowVal(fw);
+                    if (ifVal > 1) {
+                        markerText += fmt::format(" ({}I/F)", ifVal);
+                    }
+
+                    std::string presetKey = makeWindowPresetKey(ifVal, fw);
+                    if (g_windowPresets.contains(presetKey)) {
+                        auto& preset = g_windowPresets[presetKey];
+                        markerColor = preset.color;
+                        if (!preset.customText.empty()) {
+                            markerText = preset.customText;
+                        }
+                    }
+
+                    bool shouldSpawnMarker = false;
+                    if (!action.isPlayer2) {
+                        if (action.frame != m_fields->m_lastSpawnFrame1P) {
+                            shouldSpawnMarker = true;
+                            m_fields->m_lastSpawnFrame1P = action.frame;
+                        }
+                    }
+                    else {
+                        if (action.frame != m_fields->m_lastSpawnFrame2P) {
+                            shouldSpawnMarker = true;
+                            m_fields->m_lastSpawnFrame2P = action.frame;
+                        }
+                    }
+
+                    if (shouldSpawnMarker) {
+                        CCPoint spawnPos = this->m_player1->getPosition();
+                        if (action.isPlayer2 && this->m_player2) {
+                            spawnPos = this->m_player2->getPosition();
+                        }
+                        this->spawnFrameWindowMarker(spawnPos, markerText, markerColor);
+                    }
+
+                    for (auto& [idStr, preset] : g_labelPresets) {
+                        double targetVal = preset.useIF ? static_cast<double>(ifVal) : fw;
+                        if (targetVal >= preset.minVal && targetVal <= preset.maxVal) {
+                            if (!skipAudio && !preset.audioPath.empty() && preset.showInHud) {
+                                SoundManager::playSound(preset.audioPath);
+                            }
+                            m_fields->m_hudCounts[preset.id]++;
+                            if (preset.showInHud) {
+                                needsHudUpdate = true;
+                                updatedPresets.push_back(preset.id);
+                            }
+                        }
+                    }
+                }
+                it++;
+            }
+
+            m_fields->m_lastFrame = currentFrame;
+
+            if (needsHudUpdate) {
+                this->updateHUDCounts();
+                if (!skipAudio) {
+                    std::sort(updatedPresets.begin(), updatedPresets.end());
+                    updatedPresets.erase(std::unique(updatedPresets.begin(), updatedPresets.end()), updatedPresets.end());
+                    for (int id : updatedPresets) {
+                        this->playHUDCountAnimation(id);
+                    }
+                }
+            }
+        }
+    }
+
     void onMyTick(float dt) {
         if (!g_modEnabled) return;
         auto gm = GameManager::sharedState();
         if (gm->getPlayLayer() && !gm->getPlayLayer()->m_isPaused) {
             if (this->m_player1 && !this->m_player1->m_isDead) {
-                int currentFrame = static_cast<int>(this->m_gameState.m_levelTime * g_macroFps);
+                int currentFrame = static_cast<int>(std::round(this->m_gameState.m_levelTime * g_macroFps));
                 this->updatePrecisionHUD(currentFrame);
-
-                if (currentFrame < m_fields->m_lastFrame) {
-                    m_fields->m_lastFrame = currentFrame - 1;
-                    m_fields->m_lastPrecIndex = -1;
-                    g_forcePrecRedraw = true;
-                    m_fields->m_hudCounts.clear();
-                    m_fields->m_lastSpawnFrame1P = -1;
-                    m_fields->m_lastSpawnFrame2P = -1;
-                    SoundManager::stopAll();
-
-                    for (auto& marker : m_fields->m_activeMarkers) {
-                        if (marker.node) marker.node->removeFromParent();
-                    }
-                    m_fields->m_activeMarkers.clear();
-
-                    for (const auto& action : g_tickActionsCache) {
-                        if (action.shouldDraw && action.frame <= m_fields->m_lastFrame) {
-                            double fw = action.frameWindow;
-                            double ifVal = static_cast<double>(action.ifCount);
-                            for (const auto& [idStr, preset] : g_labelPresets) {
-                                double targetVal = preset.useIF ? ifVal : fw;
-                                if (targetVal >= preset.minVal && targetVal <= preset.maxVal) {
-                                    m_fields->m_hudCounts[preset.id]++;
-                                }
-                            }
-                        }
-                    }
-                    this->updateHUDCounts();
-                }
-
-                if (currentFrame > m_fields->m_lastFrame) {
-                    bool skipAudio = (currentFrame - m_fields->m_lastFrame > static_cast<int>(g_macroFps));
-                    bool needsHudUpdate = false;
-                    std::vector<int> updatedPresets;
-
-                    auto it = std::upper_bound(g_tickActionsCache.begin(), g_tickActionsCache.end(), m_fields->m_lastFrame,
-                        [](int frame, const FrameAction& a) { return frame < a.frame; });
-
-                    while (it != g_tickActionsCache.end() && it->frame <= currentFrame) {
-                        auto& action = *it;
-                        if (action.shouldDraw) {
-                            double fw = action.frameWindow;
-                            int ifVal = action.ifCount;
-                            ccColor4F markerColor = { 1.f, 1.f, 1.f, 1.f };
-
-                            std::string markerText = formatWindowVal(fw);
-                            if (ifVal > 1) {
-                                markerText += fmt::format(" ({}I/F)", ifVal);
-                            }
-
-                            std::string presetKey = makeWindowPresetKey(ifVal, fw);
-                            if (g_windowPresets.contains(presetKey)) {
-                                auto& preset = g_windowPresets[presetKey];
-                                markerColor = preset.color;
-                                if (!preset.customText.empty()) {
-                                    markerText = preset.customText;
-                                }
-                            }
-
-                            bool shouldSpawnMarker = false;
-                            if (!action.isPlayer2) {
-                                if (action.frame != m_fields->m_lastSpawnFrame1P) {
-                                    shouldSpawnMarker = true;
-                                    m_fields->m_lastSpawnFrame1P = action.frame;
-                                }
-                            }
-                            else {
-                                if (action.frame != m_fields->m_lastSpawnFrame2P) {
-                                    shouldSpawnMarker = true;
-                                    m_fields->m_lastSpawnFrame2P = action.frame;
-                                }
-                            }
-
-                            if (shouldSpawnMarker) {
-                                CCPoint spawnPos = this->m_player1->getPosition();
-                                if (action.isPlayer2 && this->m_player2) {
-                                    spawnPos = this->m_player2->getPosition();
-                                }
-                                this->spawnFrameWindowMarker(spawnPos, markerText, markerColor);
-                            }
-
-                            for (auto& [idStr, preset] : g_labelPresets) {
-                                double targetVal = preset.useIF ? static_cast<double>(ifVal) : fw;
-                                if (targetVal >= preset.minVal && targetVal <= preset.maxVal) {
-                                    if (!skipAudio && !preset.audioPath.empty() && preset.showInHud) {
-                                        SoundManager::playSound(preset.audioPath);
-                                    }
-                                    m_fields->m_hudCounts[preset.id]++;
-                                    if (preset.showInHud) {
-                                        needsHudUpdate = true;
-                                        updatedPresets.push_back(preset.id);
-                                    }
-                                }
-                            }
-                        }
-                        it++;
-                    }
-
-                    m_fields->m_lastFrame = currentFrame;
-                    if (needsHudUpdate) {
-                        this->updateHUDCounts();
-                        if (!skipAudio) {
-                            std::sort(updatedPresets.begin(), updatedPresets.end());
-                            updatedPresets.erase(std::unique(updatedPresets.begin(), updatedPresets.end()), updatedPresets.end());
-                            for (int id : updatedPresets) {
-                                this->playHUDCountAnimation(id);
-                            }
-                        }
-                    }
-                }
-                this->updateAndCleanMarkers();
+                this->updateAndCleanMarkers(); 
             }
         }
     }
@@ -671,6 +680,17 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
 
         m_fields->m_activeMarkers.push_back({ markerNode, pos });
+    }
+};
+
+class $modify(MyPlayerObject, PlayerObject) {
+    void update(float dt) {
+        PlayerObject::update(dt);
+
+        auto pl = PlayLayer::get();
+        if (pl && !pl->m_isPaused && this == pl->m_player1) {
+            static_cast<MyPlayLayer*>(pl)->onPhysicsStep();
+        }
     }
 };
 
