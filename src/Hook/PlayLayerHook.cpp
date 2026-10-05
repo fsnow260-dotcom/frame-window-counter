@@ -1,6 +1,7 @@
-#include <Geode/Geode.hpp>
+ï»¿#include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
+#include <Geode/binding/CheckpointObject.hpp>
 #include "../Data/State.hpp"
 #include "../Common.hpp"
 #include "../Audio/SoundManager.hpp"
@@ -9,6 +10,7 @@
 #include <vector>
 #include <map>
 #include <cmath>
+#include <cstddef>
 
 using namespace geode::prelude;
 
@@ -19,21 +21,28 @@ struct ActiveMarker {
 
 class $modify(MyPlayLayer, PlayLayer) {
     struct Fields {
-        int m_lastFrame = -1;                                   // ³õÊ¼ÉèÎª -1£¬±£Ö¤µÚ 0 Ö¡ÄÜ¹»´¥·¢
-        std::map<int, int> m_hudCounts;                         // ¸÷Ô¤Éè ID ¶ÔÓ¦µÄµ±Ç°ÀÛ¼ÆÃüÖĞ´ÎÊı
-        Ref<CCNode> m_hudNode = nullptr;                        // ×óÉÏ½Ç HUD ÈİÆ÷½Úµã
-        Ref<CCNode> m_precNode = nullptr;                       // ×óÏÂ½Ç Precision L* ÈİÆ÷½Úµã
-        int m_lastPrecIndex = -1;                               // ÉÏÒ»´ÎäÖÈ¾ L* Ê±Ëù´¦µÄÓĞĞ§¶¯×÷Ë÷Òı
-        bool m_wasCalculating = false;                          // ¼ÇÂ¼ÉÏÒ»Ö¡ÊÇ·ñ´¦ÓÚºóÌ¨¼ÆËãÖĞ
-        std::vector<ActiveMarker> m_activeMarkers;              // ¼ÇÂ¼±ê¼Ç½Úµã¼°ÆäÔ­Ê¼ÊÀ½ç×ø±ê
-        std::map<int, Ref<CCLabelBMFont>> m_countLabels;        // »º´æ¸÷Ô¤ÉèµÄÊı×Ö±êÇ©ÒÔÖ§³Ö¸ßĞÔÄÜ¾Ö²¿ÎÄ±¾Ë¢ĞÂ
+        int m_currentFrame = 0;                                 // åŸºäºå®é™…ç‰©ç†æ­¥è®¡æ•°çš„å¸§å·ï¼Œä¸å— timewarp å¹²æ‰°
+        int m_lastFrame = -1;                                   // åˆå§‹è®¾ä¸º -1ï¼Œä¿è¯ç¬¬ 0 å¸§èƒ½å¤Ÿè§¦å‘
+        std::map<void*, int> m_checkpointMap;                   // è®°å½•æ£€æŸ¥ç‚¹å¯¹è±¡å¯¹åº”çš„é¦–æ¬¡ä¿å­˜å¸§å·ï¼Œä»…ç”¨äºå»é‡ä¸æ™®é€šåŠ è½½
+        std::vector<int> m_checkpointFrameStack;                // æŒ‰æ£€æŸ¥ç‚¹æ ˆé¡ºåºç‹¬ç«‹ä¿å­˜æ¯ä¸ªæ£€æŸ¥ç‚¹çš„çœŸå®ç‰©ç†å¸§å·
+		int m_pendingRestoreFrame = -1;                         // è®°å½•ä¸‹ä¸€æ¬¡ restoreCheckpoint() çš„ç›®æ ‡å¸§å·ï¼Œ-1 è¡¨ç¤ºæ— æ•ˆ
+		bool m_restoreFrameArmed = false;                       // æ ‡è®°ä¸‹ä¸€æ¬¡ restoreCheckpoint() æ˜¯å¦åº”å½“æ‰§è¡Œå¸§æ¢å¤
+		bool m_checkpointRemovalActive = false;                 // æ ‡è®°å½“å‰æ˜¯å¦å¤„äº removeCheckpoint() çš„å¸§æ¢å¤é˜¶æ®µ
+		int m_checkpointRemovalRestoreFrame = -1;               // è®°å½• removeCheckpoint() è§¦å‘çš„å¸§æ¢å¤ç›®æ ‡å¸§å·ï¼Œ-1 è¡¨ç¤ºæ— æ•ˆ
+        std::map<int, int> m_hudCounts;                         // å„é¢„è®¾ ID å¯¹åº”çš„å½“å‰ç´¯è®¡å‘½ä¸­æ¬¡æ•°
+        Ref<CCNode> m_hudNode = nullptr;                        // å·¦ä¸Šè§’ HUD å®¹å™¨èŠ‚ç‚¹
+        Ref<CCNode> m_precNode = nullptr;                       // å·¦ä¸‹è§’ Precision L* å®¹å™¨èŠ‚ç‚¹
+        int m_lastPrecIndex = -1;                               // ä¸Šä¸€æ¬¡æ¸²æŸ“ L* æ—¶æ‰€å¤„çš„æœ‰æ•ˆåŠ¨ä½œç´¢å¼•
+        bool m_wasCalculating = false;                          // è®°å½•ä¸Šä¸€å¸§æ˜¯å¦å¤„äºåå°è®¡ç®—ä¸­
+        std::vector<ActiveMarker> m_activeMarkers;              // è®°å½•æ ‡è®°èŠ‚ç‚¹åŠå…¶åŸå§‹ä¸–ç•Œåæ ‡
+        std::map<int, Ref<CCLabelBMFont>> m_countLabels;        // ç¼“å­˜å„é¢„è®¾çš„æ•°å­—æ ‡ç­¾ä»¥æ”¯æŒé«˜æ€§èƒ½å±€éƒ¨æ–‡æœ¬åˆ·æ–°
 
-        // 1P Óë 2P ·ÖÁ¢µÄ×î½ü»­È¦Ö¡ºÅ¼ÇÂ¼
+        // 1P ä¸ 2P åˆ†ç«‹çš„æœ€è¿‘ç”»åœˆå¸§å·è®°å½•
         int m_lastSpawnFrame1P = -1;
         int m_lastSpawnFrame2P = -1;
 
 #if defined(GEODE_IS_MOBILE)
-        bool m_isLevelEnd = false;                              // ±ê¼Ç¹Ø¿¨ÊÇ·ñÒÑ´¥ÅöÖÕµã
+        bool m_isLevelEnd = false;                              // æ ‡è®°å…³å¡æ˜¯å¦å·²è§¦ç¢°ç»ˆç‚¹
 #endif
     };
 
@@ -43,7 +52,14 @@ class $modify(MyPlayLayer, PlayLayer) {
         g_lastAutoSaveTime = std::chrono::steady_clock::now();
         loadModData();
 
+        m_fields->m_currentFrame = 0;
         m_fields->m_lastFrame = -1;
+        m_fields->m_checkpointMap.clear();
+        m_fields->m_checkpointFrameStack.clear();
+        m_fields->m_pendingRestoreFrame = -1;
+        m_fields->m_restoreFrameArmed = false;
+        m_fields->m_checkpointRemovalActive = false;
+        m_fields->m_checkpointRemovalRestoreFrame = -1;
         m_fields->m_lastPrecIndex = -1;
         m_fields->m_wasCalculating = false;
         m_fields->m_hudCounts.clear();
@@ -63,14 +79,224 @@ class $modify(MyPlayLayer, PlayLayer) {
         return true;
     }
 
+    void rememberCheckpoint(CheckpointObject * cp) {
+        if (!cp) return;
+
+        auto key = static_cast<void*>(cp);
+
+        if (m_fields->m_checkpointMap.contains(key)) {
+            return;
+        }
+
+        const int frame = m_fields->m_currentFrame;
+        m_fields->m_checkpointMap[key] = frame;
+        m_fields->m_checkpointFrameStack.push_back(frame);
+
+        geode::log::debug(
+            "FrameAction: checkpoint pushed at physical frame {} ({:p}), stack size {}",
+            frame, key, m_fields->m_checkpointFrameStack.size()
+        );
+    }
+
+    int getSavedCheckpointFrame(CheckpointObject * cp) {
+        if (cp && this->m_checkpointArray) {
+            for (unsigned int i = 0; i < this->m_checkpointArray->count(); i++) {
+                auto currentCp = static_cast<CheckpointObject*>(
+                    this->m_checkpointArray->objectAtIndex(i)
+                    );
+
+                if (currentCp == cp) {
+                    if (i < m_fields->m_checkpointFrameStack.size()) {
+                        return m_fields->m_checkpointFrameStack[i];
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (cp) {
+            auto it = m_fields->m_checkpointMap.find(static_cast<void*>(cp));
+            if (it != m_fields->m_checkpointMap.end()) {
+                return it->second;
+            }
+        }
+
+        if (!m_fields->m_checkpointFrameStack.empty()) {
+            return m_fields->m_checkpointFrameStack.back();
+        }
+
+        return -1;
+    }
+
+    // æ”¾ç½®æ£€æŸ¥ç‚¹æ—¶ï¼Œè®°å½•å½“å‰çœŸå®çš„ç‰©ç†å¸§å·
+    CheckpointObject* createCheckpoint() {
+        auto cp = PlayLayer::createCheckpoint();
+
+        if (cp) {
+            rememberCheckpoint(cp);
+        }
+
+        return cp;
+    }
+
+    void storeCheckpoint(CheckpointObject * cp) {
+        PlayLayer::storeCheckpoint(cp);
+    }
+
+    // ç§»é™¤æ£€æŸ¥ç‚¹æ—¶ï¼Œä»ç‹¬ç«‹ checkpoint æ ˆä¸­å¼¹å‡ºæœ€ä¸Šå±‚ï¼Œ
+    // å¹¶æŠŠæ–°çš„æ ˆé¡¶ä½œä¸ºä¸‹ä¸€æ¬¡æ¢å¤ç›®æ ‡ã€‚
+    void removeCheckpoint(bool p0) {
+        if (this->m_isPracticeMode &&
+            !m_fields->m_checkpointFrameStack.empty()) {
+
+            const int beforeStackSize =
+                static_cast<int>(m_fields->m_checkpointFrameStack.size());
+
+            if (!p0 || beforeStackSize == 1) {
+                m_fields->m_checkpointFrameStack.pop_back();
+
+                if (!m_fields->m_checkpointFrameStack.empty()) {
+                    m_fields->m_checkpointRemovalActive = true;
+                    m_fields->m_checkpointRemovalRestoreFrame =
+                        m_fields->m_checkpointFrameStack.back();
+                    armCheckpointRestore(
+                        m_fields->m_checkpointFrameStack.back()
+                    );
+                }
+                else {
+                    m_fields->m_checkpointRemovalActive = false;
+                    m_fields->m_checkpointRemovalRestoreFrame = -1;
+                    m_fields->m_pendingRestoreFrame = -1;
+                    m_fields->m_restoreFrameArmed = false;
+                }
+            }
+        }
+
+        PlayLayer::removeCheckpoint(p0);
+
+        m_fields->m_checkpointMap.clear();
+
+        if (this->m_checkpointArray) {
+            const unsigned int count = this->m_checkpointArray->count();
+            const unsigned int stackCount =
+                static_cast<unsigned int>(m_fields->m_checkpointFrameStack.size());
+
+            for (unsigned int i = 0; i < count && i < stackCount; i++) {
+                auto cp = static_cast<CheckpointObject*>(
+                    this->m_checkpointArray->objectAtIndex(i)
+                    );
+
+                if (cp) {
+                    m_fields->m_checkpointMap[static_cast<void*>(cp)] =
+                        m_fields->m_checkpointFrameStack[i];
+                }
+            }
+        }
+
+        // å¦‚æœå½“å‰åˆ é™¤æµç¨‹å·²ç»ç»“æŸï¼Œç¡®ä¿æ¢å¤ç›®æ ‡å§‹ç»ˆæ˜¯æ–°çš„æ ˆé¡¶ã€‚
+        if (m_fields->m_checkpointRemovalActive &&
+            !m_fields->m_checkpointFrameStack.empty()) {
+            m_fields->m_checkpointRemovalRestoreFrame =
+                m_fields->m_checkpointFrameStack.back();
+            armCheckpointRestore(
+                m_fields->m_checkpointFrameStack.back()
+            );
+        }
+    }
+
+    void armCheckpointRestore(int frame) {
+        if (frame < 0) return;
+
+        m_fields->m_pendingRestoreFrame = frame;
+        m_fields->m_restoreFrameArmed = true;
+    }
+
+    void applyRestoredFrame() {
+        if (!m_fields->m_restoreFrameArmed) return;
+
+        const int frame = m_fields->m_pendingRestoreFrame;
+        if (frame < 0) {
+            m_fields->m_restoreFrameArmed = false;
+            return;
+        }
+
+        m_fields->m_currentFrame = frame;
+        m_fields->m_lastFrame = frame - 1;
+        m_fields->m_lastPrecIndex = -1;
+        g_forcePrecRedraw = true;
+        m_fields->m_hudCounts.clear();
+        m_fields->m_lastSpawnFrame1P = -1;
+        m_fields->m_lastSpawnFrame2P = -1;
+
+        geode::log::debug(
+            "FrameAction: restored physical frame {}",
+            frame
+        );
+
+        m_fields->m_restoreFrameArmed = false;
+        m_fields->m_pendingRestoreFrame = -1;
+    }
+
+    // ä»æ£€æŸ¥ç‚¹æ¢å¤æ—¶ï¼Œæ¢å¤ä¿å­˜çš„çœŸå®ç‰©ç†å¸§å·
+    void loadFromCheckpoint(CheckpointObject * p0) {
+        int checkpointFrame = -1;
+
+        if (m_fields->m_checkpointRemovalActive) {
+            checkpointFrame = m_fields->m_checkpointRemovalRestoreFrame;
+        }
+        else {
+            checkpointFrame = getSavedCheckpointFrame(p0);
+        }
+
+        if (checkpointFrame >= 0) {
+            armCheckpointRestore(checkpointFrame);
+        }
+
+        PlayLayer::loadFromCheckpoint(p0);
+
+        applyRestoredFrame();
+    }
+
+    void processCheckpoints() {
+        PlayLayer::processCheckpoints();
+
+        if (m_fields->m_checkpointRemovalActive) {
+            armCheckpointRestore(m_fields->m_checkpointRemovalRestoreFrame);
+            applyRestoredFrame();
+        }
+        else if (m_fields->m_restoreFrameArmed) {
+            applyRestoredFrame();
+        }
+        else if (this->m_isPracticeMode &&
+            m_fields->m_currentFrame == 0 &&
+            !m_fields->m_checkpointFrameStack.empty()) {
+            armCheckpointRestore(m_fields->m_checkpointFrameStack.back());
+            applyRestoredFrame();
+        }
+    }
+
+    void postUpdate(float dt) {
+        PlayLayer::postUpdate(dt);
+
+        if (m_fields->m_checkpointRemovalActive) {
+            armCheckpointRestore(m_fields->m_checkpointRemovalRestoreFrame);
+            applyRestoredFrame();
+            m_fields->m_checkpointRemovalActive = false;
+            m_fields->m_checkpointRemovalRestoreFrame = -1;
+        }
+        else if (m_fields->m_restoreFrameArmed) {
+            applyRestoredFrame();
+        }
+    }
+
 #if defined(GEODE_IS_MOBILE)
-    // ´´½¨ÒÆ¶¯¶Ë¿ì½İÈë¿Ú°´Å¥
+    // åˆ›å»ºç§»åŠ¨ç«¯å¿«æ·å…¥å£æŒ‰é’®
     void createMobileShortcutBtn() {
         if (!this->m_uiLayer) return;
 
         auto winSize = CCDirector::sharedDirector()->getWinSize();
 
-        // ÒÀ´Î³¢ÊÔ»ñÈ¡ºÏÊÊµÄÍ¼±ê
+        // ä¾æ¬¡å°è¯•è·å–åˆé€‚çš„å›¾æ ‡
         auto sprite = CCSprite::createWithSpriteFrameName("GJ_optionsBtn02_001.png");
         if (!sprite) {
             sprite = CCSprite::createWithSpriteFrameName("GJ_optionsBtn_001.png");
@@ -98,9 +324,9 @@ class $modify(MyPlayLayer, PlayLayer) {
         this->m_uiLayer->addChild(menu);
     }
 
-    // µã»÷°´Å¥´ò¿ª/ÇĞ»» Mod ´°¿Ú
+    // ç‚¹å‡»æŒ‰é’®æ‰“å¼€/åˆ‡æ¢ Mod çª—å£
     void onOpenModMenu(CCObject*) {
-        // Èç¹û¹Ø¿¨ÒÑ¾­Íê³É/ÕıÔÚ²¥·ÅÍ¨¹Ø¶¯»­£¬½ûÖ¹ÔÙµ¯³ö Mod
+        // å¦‚æœå…³å¡å·²ç»å®Œæˆ/æ­£åœ¨æ’­æ”¾é€šå…³åŠ¨ç”»ï¼Œç¦æ­¢å†å¼¹å‡º Mod
         if (m_fields->m_isLevelEnd) {
             return;
         }
@@ -108,7 +334,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         auto scene = CCDirector::sharedDirector()->getRunningScene();
         if (!scene) return;
 
-        // Èç¹ûµ¯´°ÒÑ´ò¿ª£¬ÔÙ´Î°´ÏÂÔò¹Ø±Õ£»·ñÔò´ò¿ªÖ÷µ¯´°
+        // å¦‚æœå¼¹çª—å·²æ‰“å¼€ï¼Œå†æ¬¡æŒ‰ä¸‹åˆ™å…³é—­ï¼›å¦åˆ™æ‰“å¼€ä¸»å¼¹çª—
         if (auto existing = scene->getChildByID("FrameActionPopup"_spr)) {
             existing->removeFromParentAndCleanup(true);
             return;
@@ -120,13 +346,13 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
     }
 
-    // ÇĞºóÌ¨»òÊÖ¶¯ÔİÍ£Ê±¹Ø±ÕËùÓĞµ¯´°
+    // åˆ‡åå°æˆ–æ‰‹åŠ¨æš‚åœæ—¶å…³é—­æ‰€æœ‰å¼¹çª—
     void pauseGame(bool p0) {
         closeAllModPopups();
         PlayLayer::pauseGame(p0);
     }
 
-    // ´¥ÅöÖÕµãÍ¨¹ØÊ±¹Ø±ÕËùÓĞµ¯´°²¢¼ÓËø
+    // è§¦ç¢°ç»ˆç‚¹é€šå…³æ—¶å…³é—­æ‰€æœ‰å¼¹çª—å¹¶åŠ é”
     void levelComplete() {
         m_fields->m_isLevelEnd = true;
         closeAllModPopups();
@@ -167,28 +393,75 @@ class $modify(MyPlayLayer, PlayLayer) {
     }
 
     void resetLevel() {
+        int restoreFrame = -1;
+
+        if (m_fields->m_checkpointRemovalActive &&
+            m_fields->m_checkpointRemovalRestoreFrame >= 0) {
+            restoreFrame = m_fields->m_checkpointRemovalRestoreFrame;
+        }
+        else if (m_fields->m_pendingRestoreFrame >= 0) {
+            restoreFrame = m_fields->m_pendingRestoreFrame;
+        }
+        else if (this->m_isPracticeMode) {
+            CheckpointObject* cp = this->m_currentCheckpoint;
+
+            if (!cp && this->m_checkpointArray &&
+                this->m_checkpointArray->count() > 0) {
+                cp = static_cast<CheckpointObject*>(
+                    this->m_checkpointArray->lastObject()
+                    );
+            }
+
+            if (cp) {
+                restoreFrame = getSavedCheckpointFrame(cp);
+            }
+
+            if (restoreFrame < 0 &&
+                !m_fields->m_checkpointFrameStack.empty()) {
+                restoreFrame = m_fields->m_checkpointFrameStack.back();
+            }
+        }
+
+        if (restoreFrame >= 0) {
+            armCheckpointRestore(restoreFrame);
+        }
+
         PlayLayer::resetLevel();
         SoundManager::stopAll();
 
 #if defined(GEODE_IS_MOBILE)
-        m_fields->m_isLevelEnd = false; // ¸´»îÊ±ÖØÖÃÍ¨¹ØËø
+        m_fields->m_isLevelEnd = false; // å¤æ´»æ—¶é‡ç½®é€šå…³é”
 #endif
 
-        int currentFrame = static_cast<int>(this->m_gameState.m_levelTime * g_macroFps);
-        m_fields->m_lastFrame = currentFrame - 1; // ÉèÎªÇ°Ò»Ö¡£¬±£Ö¤µ±Ç°ÆğµãÖ¡µÄ¶¯×÷ÄÜÔÚ onMyTick ÖĞ´¥·¢
-        m_fields->m_lastPrecIndex = -1;
-        g_forcePrecRedraw = true;
-        m_fields->m_hudCounts.clear();
-        m_fields->m_lastSpawnFrame1P = -1;
-        m_fields->m_lastSpawnFrame2P = -1;
+        if (m_fields->m_restoreFrameArmed) {
+            applyRestoredFrame();
+        }
+        else if (restoreFrame >= 0) {
+            m_fields->m_currentFrame = restoreFrame;
+            m_fields->m_lastFrame = restoreFrame - 1; // è®¾ä¸ºå‰ä¸€å¸§ï¼Œä¿è¯å½“å‰èµ·ç‚¹å¸§çš„åŠ¨ä½œèƒ½åœ¨ onPhysicsStep ä¸­è§¦å‘
+            m_fields->m_lastPrecIndex = -1;
+            g_forcePrecRedraw = true;
+            m_fields->m_hudCounts.clear();
+            m_fields->m_lastSpawnFrame1P = -1;
+            m_fields->m_lastSpawnFrame2P = -1;
+        }
+        else {
+            m_fields->m_currentFrame = 0;
+            m_fields->m_lastFrame = -1;
+            m_fields->m_lastPrecIndex = -1;
+            g_forcePrecRedraw = true;
+            m_fields->m_hudCounts.clear();
+            m_fields->m_lastSpawnFrame1P = -1;
+            m_fields->m_lastSpawnFrame2P = -1;
+        }
 
-        // Çå¿Õ´æ»î±ê¼Ç
+        // æ¸…ç©ºå­˜æ´»æ ‡è®°
         for (auto& marker : m_fields->m_activeMarkers) {
             if (marker.node) marker.node->removeFromParent();
         }
         m_fields->m_activeMarkers.clear();
 
-        // ÖØĞÂÍ³¼Æ¸´»îÆğµãÖ®Ç°µÄ HUD Êı¾İ
+        // é‡æ–°ç»Ÿè®¡å¤æ´»èµ·ç‚¹ä¹‹å‰çš„ HUD æ•°æ®
         for (const auto& action : g_tickActionsCache) {
             if (action.shouldDraw && action.frame <= m_fields->m_lastFrame) {
                 double fw = action.frameWindow;
@@ -203,7 +476,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
 
         this->updateHUDCounts();
-        this->updatePrecisionHUD(currentFrame);
+        this->updatePrecisionHUD(m_fields->m_currentFrame);
 
         if (this->m_objectLayer) {
             auto children = this->m_objectLayer->getChildren();
@@ -431,7 +704,7 @@ class $modify(MyPlayLayer, PlayLayer) {
             };
         }
 
-        // ÇåÀí²ĞÁôµÄ¾É Glow ½Úµã
+        // æ¸…ç†æ®‹ç•™çš„æ—§ Glow èŠ‚ç‚¹
         const int TAG_GLOW_NODE = 20000 + presetId;
         if (m_fields->m_hudNode) {
             if (auto oldGlow = m_fields->m_hudNode->getChildByTag(TAG_GLOW_NODE)) {
@@ -445,20 +718,20 @@ class $modify(MyPlayLayer, PlayLayer) {
         countLbl->stopActionByTag(TAG_SCALE);
         countLbl->stopActionByTag(TAG_TINT);
 
-        // ¶¯»­Ê±³¤Óë·ù¶ÈÅäÖÃ
-        constexpr float TIME_UP = 0.06f; // ·Å´ó²¢±ä°×µÄÊ±³¤
-        constexpr float TIME_DOWN = 0.20f; // Ëõ»Ø²¢»Ö¸´Ô­É«µÄÊ±³¤
-        constexpr float BASE_SCALE = 0.50f; // ³£Ì¬³ß´ç
-        constexpr float PEAK_SCALE = 0.60f; // µ¯Æğ·åÖµ³ß´ç
+        // åŠ¨ç”»æ—¶é•¿ä¸å¹…åº¦é…ç½®
+        constexpr float TIME_UP = 0.06f; // æ”¾å¤§å¹¶å˜ç™½çš„æ—¶é•¿
+        constexpr float TIME_DOWN = 0.20f; // ç¼©å›å¹¶æ¢å¤åŸè‰²çš„æ—¶é•¿
+        constexpr float BASE_SCALE = 0.50f; // å¸¸æ€å°ºå¯¸
+        constexpr float PEAK_SCALE = 0.60f; // å¼¹èµ·å³°å€¼å°ºå¯¸
 
-        // Ëõ·Å¶¯»­
+        // ç¼©æ”¾åŠ¨ç”»
         auto scaleUp = CCEaseSineOut::create(CCScaleTo::create(TIME_UP, PEAK_SCALE));
         auto scaleDown = CCEaseSineOut::create(CCScaleTo::create(TIME_DOWN, BASE_SCALE));
         auto scaleSeq = CCSequence::create(scaleUp, scaleDown, nullptr);
         scaleSeq->setTag(TAG_SCALE);
         countLbl->runAction(scaleSeq);
 
-        // ÑÕÉ«½¥±ä
+        // é¢œè‰²æ¸å˜
         auto tintToWhite = CCEaseSineOut::create(CCTintTo::create(TIME_UP, 255, 255, 255));
         auto tintToOrig = CCEaseSineOut::create(CCTintTo::create(TIME_DOWN, origColor.r, origColor.g, origColor.b));
         auto tintSeq = CCSequence::create(tintToWhite, tintToOrig, nullptr);
@@ -485,12 +758,12 @@ class $modify(MyPlayLayer, PlayLayer) {
                 continue;
             }
 
-            // ½«ÎïÌå²ãµÄÊÀ½ç×ø±ê×ª»»ÎªÆÁÄ»×ø±ê
+            // å°†ç‰©ä½“å±‚çš„ä¸–ç•Œåæ ‡è½¬æ¢ä¸ºå±å¹•åæ ‡
             CCPoint screenPos = this->m_objectLayer->convertToWorldSpace(marker.worldPos);
             marker.node->setPosition(screenPos);
-            marker.node->setScale(layerScale); // ËæÉãÏñ»úËõ·ÅÍ¬²½±ä»¯
+            marker.node->setScale(layerScale); // éšæ‘„åƒæœºç¼©æ”¾åŒæ­¥å˜åŒ–
 
-            // Ô½½çÇåÀí
+            // è¶Šç•Œæ¸…ç†
             if (screenPos.x < minX || screenPos.x > maxX || screenPos.y < minY || screenPos.y > maxY) {
                 marker.node->removeFromParent();
                 it = m_fields->m_activeMarkers.erase(it);
@@ -505,7 +778,12 @@ class $modify(MyPlayLayer, PlayLayer) {
         if (!g_modEnabled) return;
         if (!this->m_player1 || this->m_player1->m_isDead) return;
 
-        int currentFrame = static_cast<int>(std::round(this->m_gameState.m_levelTime * g_macroFps)) + 1;
+        if (m_fields->m_restoreFrameArmed) {
+            applyRestoredFrame();
+        }
+
+        m_fields->m_currentFrame++;
+        int currentFrame = m_fields->m_currentFrame;
 
         if (currentFrame < m_fields->m_lastFrame) {
             m_fields->m_lastFrame = currentFrame - 1;
@@ -624,9 +902,19 @@ class $modify(MyPlayLayer, PlayLayer) {
         auto gm = GameManager::sharedState();
         if (gm->getPlayLayer() && !gm->getPlayLayer()->m_isPaused) {
             if (this->m_player1 && !this->m_player1->m_isDead) {
-                int currentFrame = static_cast<int>(std::round(this->m_gameState.m_levelTime * g_macroFps));
+                if (m_fields->m_checkpointRemovalActive) {
+                    armCheckpointRestore(m_fields->m_checkpointRemovalRestoreFrame);
+                    applyRestoredFrame();
+                    m_fields->m_checkpointRemovalActive = false;
+                    m_fields->m_checkpointRemovalRestoreFrame = -1;
+                }
+                else if (m_fields->m_restoreFrameArmed) {
+                    applyRestoredFrame();
+                }
+
+                int currentFrame = m_fields->m_currentFrame;
                 this->updatePrecisionHUD(currentFrame);
-                this->updateAndCleanMarkers(); 
+                this->updateAndCleanMarkers();
             }
         }
     }
@@ -698,4 +986,12 @@ void triggerHUDRefresh() {
     if (auto pl = PlayLayer::get()) {
         static_cast<MyPlayLayer*>(pl)->recalculateAndRefreshHUD();
     }
+}
+
+// å¯¼å‡ºå½“å‰ç‰©ç†å¸§å·ä¾› CCDirectorHook è°ƒç”¨
+int getCurrentPhysicsFrame() {
+    if (auto pl = PlayLayer::get()) {
+        return static_cast<MyPlayLayer*>(pl)->m_fields->m_currentFrame;
+    }
+    return 0;
 }

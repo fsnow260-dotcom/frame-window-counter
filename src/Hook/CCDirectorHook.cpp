@@ -17,6 +17,8 @@
 
 using namespace geode::prelude;
 
+int getCurrentPhysicsFrame();
+
 static bool isAnyTextInputFocused(CCNode* root) {
     if (!root) return false;
 
@@ -100,7 +102,7 @@ class $modify(MyDirector, CCDirector) {
             if (auto playLayer = PlayLayer::get()) {
                 if (!playLayer->m_isPaused && playLayer->m_player1 && !playLayer->m_player1->m_isDead) {
                     if (auto popup = typeinfo_cast<FrameActionPopup*>(scene->getChildByID("FrameActionPopup"_spr))) {
-                        int currentFrame = static_cast<int>(playLayer->m_gameState.m_levelTime * g_macroFps);
+                        int currentFrame = getCurrentPhysicsFrame();
                         popup->doTrackingTick(currentFrame);
                     }
                 }
