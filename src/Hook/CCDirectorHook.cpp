@@ -6,7 +6,7 @@ using namespace geode::prelude;
 
 class $modify(MyKeyboardHook, CCKeyboardDispatcher) {
     bool dispatchKeyboardMSG(enumKeyCodes key, bool down, bool repeat) {
-        if (down && !repeat && key == KEY_Zero) {
+        if (down && !repeat && key == enumKeyCodes::KEY_Zero) {
             bool currentState = State::get().isLabelVisible();
             State::get().setLabelVisible(!currentState);
         }

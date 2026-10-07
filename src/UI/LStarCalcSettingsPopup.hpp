@@ -1,21 +1,11 @@
 #pragma once
+
 #include <Geode/Geode.hpp>
+#include <Geode/ui/Popup.hpp>
 
-class LStarCalcSettingsPopup : public geode::Popup {
+class LStarCalcSettingsPopup : public geode::Popup<> {
 protected:
-    geode::TextInput* m_tpsInput = nullptr;
-    geode::TextInput* m_respawnInput = nullptr;
-    geode::TextInput* m_targetTimeInput = nullptr;
-    geode::TextInput* m_nerveInput = nullptr;
-    geode::TextInput* m_fatigueInput = nullptr;
-    geode::TextInput* m_cpsInput = nullptr;
-
-    bool init();
-    void saveInputs();
-    void syncInputsFromState();
-
-    void onResetDefaults(cocos2d::CCObject*);
-    void onClose(cocos2d::CCObject*);
+    bool setup() override;
 
 public:
     static LStarCalcSettingsPopup* create();

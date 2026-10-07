@@ -1,6 +1,8 @@
 #include "LStarCalcSettingsPopup.hpp"
 #include "../Math/Calculator.hpp"
 #include "../Data/State.hpp"
+#include <sstream>
+#include <iomanip>
 
 using namespace geode::prelude;
 
@@ -9,7 +11,6 @@ bool LStarCalcSettingsPopup::setup() {
 
     auto winSize = m_mainLayer->getContentSize();
 
-    // Trigger L* Solve
     auto inputs = State::get().getInputs();
     CalculationResult result = nandl::Calculator::solve(inputs, 0.5);
 

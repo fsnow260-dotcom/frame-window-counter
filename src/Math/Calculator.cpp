@@ -1,7 +1,6 @@
 #include "Calculator.hpp"
 #include <algorithm>
 #include <cmath>
-#include <numeric>
 
 #ifndef M_SQRT2
 #define M_SQRT2 1.41421356237309504880
@@ -54,7 +53,7 @@ CalculationResult Calculator::solve(const std::vector<InputData>& inputs, double
 
     if (inputs.empty()) {
         res.valid = false;
-        res.errorMessage = "No click inputs available.";
+        res.errorMessage = "No click inputs provided";
         return res;
     }
 
@@ -74,7 +73,7 @@ CalculationResult Calculator::solve(const std::vector<InputData>& inputs, double
     for (int iter = 0; iter < 120; ++iter) {
         if (g_cancelRequested.load()) {
             res.valid = false;
-            res.errorMessage = "Calculation cancelled by user.";
+            res.errorMessage = "Calculation cancelled";
             return res;
         }
 
@@ -106,6 +105,3 @@ CalculationResult Calculator::solve(const std::vector<InputData>& inputs, double
 }
 
 } // namespace nandl
-
-void stopGlobalRecalc() { nandl::stopGlobalRecalc(); }
-void startGlobalRecalc() { nandl::startGlobalRecalc(); }

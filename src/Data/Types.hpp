@@ -5,9 +5,9 @@
 
 struct InputData {
     double timeSeconds = 0.0;   // Elapsed level time (t_i)
-    double windowSeconds = 0.0; // Frame window size (w_i)
+    double windowSeconds = 0.0; // Click window size (w_i)
     double clickIndex = 0.0;    // Sequential click count (u_i)
-    double cps = 0.0;           // Clicks per second at current frame
+    double cps = 0.0;           // Clicks per second
     int frame = 0;              // Game tick index
 };
 
