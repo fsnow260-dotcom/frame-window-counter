@@ -4,7 +4,10 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - "**"
+      - main
+      - master
+    tags:
+      - 'v*'
 
 jobs:
   build:
@@ -12,25 +15,11 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          # Windows
           - name: Windows
             os: windows-latest
-            extra-cmake-args: "-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl"
-
-          # macOS
-          - name: macOS
-            os: macos-latest
-
-          # ios
-          - name: iOS
-            os: macos-latest
-            target: iOS
-
-          # Android
           - name: Android32
             os: ubuntu-latest
             target: Android32
-
           - name: Android64
             os: ubuntu-latest
             target: Android64
@@ -40,29 +29,20 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Setup Latest CMake
-        uses: jwlawson/actions-setup-cmake@v2
-        with:
-          cmake-version: 'latest'
 
-      - name: Build the mod
+      - name: Build Mod
         uses: geode-sdk/build-geode-mod@main
         with:
-          combine: true
           target: ${{ matrix.config.target }}
-          extra-cmake-args: ${{ matrix.config.extra-cmake-args }}
+          combine: true
 
   package:
-    name: Package builds
+    name: Package Mod
     runs-on: ubuntu-latest
-    needs: ['build']
+    needs: build
 
     steps:
-      - uses: geode-sdk/build-geode-mod/combine@main
-        id: build
+      - uses: actions/checkout@v4
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: frame_window-universal
-          path: ${{ steps.build.outputs.build-output }}
+      - name: Package Mod
+        uses: geode-sdk/build-geode-mod/combine@main
